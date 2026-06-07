@@ -5,9 +5,12 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "awscli>=1.45.24",
+    "awscli-local>=0.22.2",
     "cloudscraper>=1.2.71",
     "curl-cffi>=0.15.0",
     "httpx[http2]>=0.28.1",
+    "python-dotenv>=1.2.2",
     "requests>=2.34.2",
     "selenium>=4.44.0",
 ]
