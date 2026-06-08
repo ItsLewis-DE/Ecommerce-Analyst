@@ -1,52 +1,139 @@
-echo 'Gan Role cho ham lambda'
+#!/bin/bash
 
-s3_get_policy='{
-    "Version":"2012-10-17",
+# 1. Trust Policy
+TRUST_POLICY='{
+    "Version": "2012-10-17",
     "Statement": [
         {
-            "Effect":"Allow",
-            "Action": [
-                "s3:GetObject",
-                "s3:ListBucket"
-            ],
-            "Resource": [
-                "arn:aws:s3:::job-raw-bucket",
-                "arn:aws:s3:::job-raw-bucket/*"
-            ]
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "lambda.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole"
         }
-    ]
+    ] 
 }'
 
-arn=$(awslocal iam get-role --role-name LambdaS3LoadRole --query 'Role.Arn' --output text 2>/dev/null)
-if [ -z "$arn" ]; then
-    echo 'Role chua ton tai. Dang khoi tao....'
-    arn=$(awslocal iam create-role --role-name LambdaS3LoadRole \
-        --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
-        --query 'Role.Arn' \
-        --output text
-        )
-else 
-    echo "Role da khoi tao. Se su dung role cu!"
-fi 
-    
-echo 'Tao thanh cong arn'
+echo "Creating role: lambda-s3-role..."
+awslocal iam create-role \
+    --role-name lambda-s3-role \
+    --assume-role-policy-document "$TRUST_POLICY"
 
-awslocal iam put-role-policy --role-name LambdaS3LoadRole \
-    --policy-name S3GetPolicy \
-    --policy-document "$s3_get_policy"
+# 2. Cleanse Policy
+CLEANSE_POLICY='{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::yt-landing-bucket",
+        "arn:aws:s3:::yt-landing-bucket/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::yt-cleansed-bucket",
+        "arn:aws:s3:::yt-cleansed-bucket/*"
+      ]
+    }
+  ]
+}'
 
-echo 'Dang nen file'
+echo "Creating and attaching policy: lambda-policy..."
+ARN=$(awslocal iam create-policy \
+    --policy-name lambda-policy \
+    --policy-document "$CLEANSE_POLICY" \
+    --query 'Policy.Arn' --output text)
 
-zip -j function.zip src/lambda_functions/process_data/app.py
+awslocal iam attach-role-policy \
+    --role-name lambda-s3-role \
+    --policy-arn "$ARN"
 
-echo 'Nen file thanh cong!'
+# 3. Transform Policy
+TRANSFORM_POLICY='{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::yt-cleansed-bucket",
+        "arn:aws:s3:::yt-cleansed-bucket/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::yt-analytics-bucket",
+        "arn:aws:s3:::yt-analytics-bucket/*"
+      ]
+    }
+  ]
+}'
 
-awslocal lambda delete-function --function-name transform-function 2>/dev/null
+echo "Creating and attaching policy: lambda-transform-policy..."
+ARN_TRANSFORM=$(awslocal iam create-policy \
+    --policy-name lambda-transform-policy \
+    --policy-document "$TRANSFORM_POLICY" \
+    --query 'Policy.Arn' --output text)
 
-awslocal lambda create-function \
-    --function-name transform-function \
-    --runtime python3.12 \
-    --handler app.lambda_transfer \
-    --role $arn \
-    --zip-file fileb://function.zip \
-    --environment "Variables={NAME_BUCKET_RAW=job-raw-bucket,KEY=latest_data.json}"
+awslocal iam attach-role-policy \
+    --role-name lambda-s3-role \
+    --policy-arn "$ARN_TRANSFORM"
+
+# 4. Landing Write Policy (Đã bổ sung biến bị thiếu)
+LANDING_WRITE_POLICY='{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectAcl",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::yt-landing-bucket",
+        "arn:aws:s3:::yt-landing-bucket/*"
+      ]
+    }
+  ]
+}'
+
+echo "Creating policy: s3-landing-write-policy..."
+awslocal iam create-policy \
+  --policy-name s3-landing-write-policy \
+  --policy-document "$LANDING_WRITE_POLICY"
+
+echo "List of IAM Roles:"
+awslocal iam list-roles --query 'Roles[*].RoleName'
+
+echo "List of IAM Users:"
+awslocal iam list-users --query 'Users[*].UserName'
+
+echo "List of Customer Managed Policies:"
+awslocal iam list-policies --scope Local --query 'Policies[*].PolicyName'
+
+echo "Attached Policies to lambda-s3-role:"
+awslocal iam list-attached-role-policies --role-name lambda-s3-role --query 'AttachedPolicies[*].PolicyName'
+
+echo "Attached Policies to clickhouse-user:"
+awslocal iam list-attached-user-policies --user-name clickhouse-user --query 'AttachedPolicies[*].PolicyName'
+
+echo "=========== IAM Setup Completed Successfully ==========="

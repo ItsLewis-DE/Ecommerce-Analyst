@@ -8,3 +8,16 @@ wheels/
 
 # Virtual environments
 .venv
+venv/
+
+# Environment variables
+.env
+
+# Data files
+output.json
+*.zip
+
+# IDE/OS files
+.vscode/
+.idea/
+.DS_Store

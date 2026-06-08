@@ -7,6 +7,8 @@ awslocal s3 mb s3://job-raw-bucket
 
 awslocal s3 mb s3://job-processed-bucket
 
+awslocal s3 mb s3://job-analytics-bucket
+
 echo 'Listing bucket'
 
 awslocal s3 ls
