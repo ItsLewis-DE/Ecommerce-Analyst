@@ -1,3 +1,7 @@
+!/bin/bash
+export AWS_PAGER=""
+
+
 #!/bin/bash
 echo '============================================='
 echo 'Đang khởi tạo IAM role'

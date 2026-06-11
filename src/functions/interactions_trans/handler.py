@@ -7,40 +7,27 @@ from pandera import Column,DataFrameSchema,Check
 import os,logging
 from pathlib import Path
 import pandas as pd 
-import numpy as np
 
 session = boto3.Session()
 s3_client = session.client('s3')
-
 BUCKET_RAW = os.getenv('BUCKET_RAW','raw-bucket')
 BUCKET_PROCESSED = os.getenv('BUCKET_PROCESSED','process-bucket')
 
-
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
-product_schema = DataFrameSchema(
+interaction_schema = DataFrameSchema(
     {
-        # Kiểm tra ID phải đúng chuẩn format UUID (chữ, số, dấu gạch ngang)
-        "product_id": Column(str, Check.str_matches(r'^[0-9a-fA-F\-]+$'), nullable=False),
-        
-        "product_name": Column(str, nullable=True),
-        "category": Column(str, nullable=True),
-        "subcategory": Column(str, nullable=True),
-        "brand": Column(str, nullable=True),
-        "price": Column(float, Check.ge(0), nullable=True), 
-        
-        # Rating từ 0 đến 5
-        "rating_avg": Column(float, Check.in_range(0.0, 5.0), nullable=True),
-        
-        "review_count": Column(float, Check.ge(0), nullable=True),
-        "stock_quantity": Column(float, Check.ge(0), nullable=True),
-        
-        "date_added": Column(pa.DateTime, nullable=True) # Chuỗi ngày tháng
+        "interaction_id": Column(str, Check.str_matches(r'^[0-9a-fA-F\-]+$'), nullable=False),
+        "user_id": Column(str, Check.str_matches(r'^[0-9a-fA-F\-]+$'), nullable=True),
+        "product_id": Column(str, Check.str_matches(r'^[0-9a-fA-F\-]+$'), nullable=True),
+        "session_id": Column(str, Check.str_matches(r'^[0-9a-fA-F\-]+$'), nullable=True),
+        "interaction_type": Column(str, nullable=True),
+        "timestamp": Column(str, nullable=True),
+        "dwell_time_ms": Column(float, Check.ge(0), nullable=True),
     },
     strict=False, 
     coerce=True   
-)   
-
+)
 def lambda_handler(event,context):
     logger = logging.getLogger(__name__)
     s3_record = event['Records'][0]
@@ -51,7 +38,7 @@ def lambda_handler(event,context):
     file_name = Path(file_key).stem
 
     s3_path_in = f"s3://{s3_record['s3']['bucket']['name']}/{file_key}"
-    s3_path_out = f's3://{BUCKET_PROCESSED}/{file_name}.parquet' 
+    s3_path_out = f's3://{BUCKET_PROCESSED}/{file_name}.parquet'
     try:
         #1. Đọc dữ liệu từ s3
         dfs_iterator = wr.s3.read_csv(path=s3_path_in,chunksize=10000)
@@ -64,36 +51,22 @@ def lambda_handler(event,context):
             logger.info(f"Đang xử lí chunk thứ {chunk_idx}")
 
             # -----------------------------------------------------
-            #  Transformation
+            # 2. TRANSFORMATION (Xử lí dữ liệu)
             # -----------------------------------------------------
 
-            chunk_df['category'] = chunk_df['category'].str.title()
-            chunk_df['subcategory'] = chunk_df['subcategory'].str.title()
-            chunk_df['brand'] = chunk_df['brand'].str.title()
-            chunk_df.drop(columns=['product_description'],inplace=True, errors='ignore')
-
-            chunk_df['price'] = pd.to_numeric(chunk_df['price'],errors='coerce')
-            chunk_df['rating_avg'] = pd.to_numeric(chunk_df['rating_avg']).fillna(0)
-            chunk_df['review_count'] = pd.to_numeric(chunk_df['review_count'])
-            chunk_df['stock_quantity'] = pd.to_numeric(chunk_df['stock_quantity'])
-
-            #enrich data
-            conditions = [
-                (chunk_df['stock_quantity'] ==0),
-                (chunk_df['stock_quantity']<10),
-                (chunk_df['stock_quantity'] >=10)
-            ]
-            choices = ['Out of Stock','Low Stock','In stock']
-            chunk_df['stock_status'] = np.select(conditions,choices,default='Không xác định')
-            chunk_df['date_added'] = pd.to_datetime(chunk_df['date_added'])
-            chunk_df['month'] = chunk_df['date_added'].dt.month
-            chunk_df['year'] = chunk_df['date_added'].dt.year 
+            chunk_df['time_stamp'] = pd.to_datetime(chunk_df['timestamp'],errors='coerce')
+            chunk_df['year'] = chunk_df['time_stamp'].dt.year
+            chunk_df['month'] = chunk_df['time_stamp'].dt.month
+            chunk_df = chunk_df.dropna(axis=0,how='any',subset=['user_id','product_id','session_id'])
+            chunk_df['dwell_time_ms'] = chunk_df['dwell_time_ms'].fillna(0).abs()
+            chunk_df['interaction_type'] = chunk_df['interaction_type'].str.lower().str.strip()
             # -----------------------------------------------------
             # 3. VALIDATION (Kiểm tra dữ liệu qua Data Contract)
             # -----------------------------------------------------
+
             try:
                 logger.info(f"Đang tiến hành validate dữ liệu của chunk thứ {chunk_idx}")
-                chunk_df = product_schema.validate(chunk_df)
+                chunk_df = interaction_schema.validate(chunk_df)
             except pandera.errors.SchemaError as exc:
                 logger.error(f"Dữ liệu bị sai.Lỗi tại cột {exc.schema.name}")
                 logger.error(f"CHi tiết lỗi {exc}")
@@ -110,4 +83,5 @@ def lambda_handler(event,context):
         logger.info("Đã xử lí xong toàn bộ các file!")
     except Exception as e:
         logger.error(f'Có lỗi xãy ra trong khi xử lí dữ liệu!')
-        raise        
+        raise
+

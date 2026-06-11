@@ -7,6 +7,7 @@ from pandera import Column,DataFrameSchema,Check
 import os,logging
 from pathlib import Path
 import pandas as pd 
+import numpy as np
 
 session = boto3.Session()
 s3_client = session.client('s3')
@@ -23,7 +24,7 @@ reviews_schema = DataFrameSchema(
         "review_id": Column(str, Check.str_matches(r'^[0-9a-fA-F\-]+$'), nullable=False),
         "user_id": Column(str,Check.str_matches(r'^[0-9a-fA-F\-]+$'),nullable=False),
         "product_id": Column(str,Check.str_matches(r'^[0-9a-fA-F\-]+$'),nullable=False),
-        "purchase_id": Column(str,Check.str_matches(r'^[0-9a-fA-F\-]+$'),nullable=True),
+        "purchase_id": Column(str,nullable=True),
         "rating": Column(float,Check.in_range(1,5),nullable=True),
         "review_date": Column(str, nullable=True),
     },
@@ -43,42 +44,45 @@ def lambda_handler(event,context):
     s3_path_in = f"s3://{s3_record['s3']['bucket']['name']}/{file_key}"
     s3_path_out = f's3://{BUCKET_PROCESSED}/{file_name}.parquet' 
 
-    if file_name == 'reviews':
-        try:
-            #1. Đọc dữ liệu từ s3
-            dfs_iterator = wr.s3.read_csv(path=s3_path_in,chunksize=10000)
+    try:
+        #1. Đọc dữ liệu từ s3
+        dfs_iterator = wr.s3.read_csv(path=s3_path_in,chunksize=10000)
 
-            chunk_idx = 0
-            #2. Đọc dữ liệu theo chunk
-            for chunk_df in dfs_iterator:
-                chunk_idx +=1
-                logger.info(f"Đang xử lí chunk thứ {chunk_idx}")
+        chunk_idx = 0
+        is_first_chunk = True
+        #2. Đọc dữ liệu theo chunk
+        for chunk_df in dfs_iterator:
+            chunk_idx +=1
+            logger.info(f"Đang xử lí chunk thứ {chunk_idx}")
 
-                # -----------------------------------------------------
-                #  Transformation
-                # -----------------------------------------------------
-                chunk_df['purchase_id'] = np.where(chunk_df['purchase_id'].isna(), 'Unknown', chunk_df['purchase_id'])
-                chunk_df['review_date'] = pd.to_datetime(chunk_df['review_date'], format="%Y-%m-%d %H:%M:%S")
-                chunk_df['year'] = chunk_df['review_date'].dt.year 
-                chunk_df['month'] = chunk_df['review_date'].dt.month 
-                chunk_df.drop(columns=['title','review_text'], inplace=True)
-                # -----------------------------------------------------
-                # 3. VALIDATION (Kiểm tra dữ liệu qua Data Contract)
-                # -----------------------------------------------------
-                try:
-                    logger.info(f"Đang tiến hành validate dữ liệu của chunk thứ {chunk_idx}")
-                    chunk_df = reviews_schema.validate(chunk_df)
-                except pandera.errors.SchemaError as exc:
-                    logger.error(f"Dữ liệu bị sai.Lỗi tại cột {exc.schema.name}")
-                    logger.error(f"CHi tiết lỗi {exc}")
-                    raise
-                wr.s3.to_parquet(
-                    df=chunk_df,
-                    path = s3_path_out,
-                    dataset=True,
-                    mode = 'overwrite'
-                )
-            logger.info("Đã xử lí xong toàn bộ các file!")
-        except Exception as e:
-            logger.error(f'Có lỗi xãy ra trong khi xử lí dữ liệu!')
-            raise        
+            # -----------------------------------------------------
+            #  Transformation
+            # -----------------------------------------------------
+            chunk_df['purchase_id'] = np.where(chunk_df['purchase_id'].isna(), 'Unknown', chunk_df['purchase_id'])
+            chunk_df['review_date'] = pd.to_datetime(chunk_df['review_date'],errors='coerce')
+            chunk_df['year'] = chunk_df['review_date'].dt.year 
+            chunk_df['month'] = chunk_df['review_date'].dt.month 
+            chunk_df.drop(columns=['title','review_text'], inplace=True, errors='ignore')
+            # -----------------------------------------------------
+            # 3. VALIDATION (Kiểm tra dữ liệu qua Data Contract)
+            # -----------------------------------------------------
+            try:
+                logger.info(f"Đang tiến hành validate dữ liệu của chunk thứ {chunk_idx}")
+                chunk_df = reviews_schema.validate(chunk_df)
+            except pa.errors.SchemaError as exc:
+                logger.error(f"Dữ liệu bị sai.Lỗi tại cột {exc.schema.name}")
+                logger.error(f"CHi tiết lỗi {exc}")
+                raise
+            
+            write_mode = 'overwrite' if is_first_chunk else 'append'
+            wr.s3.to_parquet(
+                df=chunk_df,
+                path = s3_path_out,
+                dataset=True,
+                mode = write_mode
+            )
+            is_first_chunk = False
+        logger.info("Đã xử lí xong toàn bộ các file!")
+    except Exception as e:
+        logger.error(f'Có lỗi xãy ra trong khi xử lí dữ liệu!')
+        raise        

@@ -1,0 +1,76 @@
+{
+    "LambdaFunctionConfigurations": [
+        {
+            "Id": "trigger-users",
+            "LambdaFunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:users_trans",
+            "Events": ["s3:ObjectCreated:*"],
+            "Filter": {
+                "Key": {
+                    "FilterRules": [
+                        {"Name": "prefix", "Value": "users/"}
+                    ]
+                }
+            }
+        },
+        {
+            "Id": "trigger-products",
+            "LambdaFunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:products_trans",
+            "Events": ["s3:ObjectCreated:*"],
+            "Filter": {
+                "Key": {
+                    "FilterRules": [
+                        {"Name": "prefix", "Value": "products/"}
+                    ]
+                }
+            }
+        },
+        {
+            "Id": "trigger-sessions",
+            "LambdaFunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:sessions_trans",
+            "Events": ["s3:ObjectCreated:*"],
+            "Filter": {
+                "Key": {
+                    "FilterRules": [
+                        {"Name": "prefix", "Value": "sessions/"}
+                    ]
+                }
+            }
+        },
+        {
+            "Id": "trigger-interactions",
+            "LambdaFunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:interactions_trans",
+            "Events": ["s3:ObjectCreated:*"],
+            "Filter": {
+                "Key": {
+                    "FilterRules": [
+                        {"Name": "prefix", "Value": "interactions/"}
+                    ]
+                }
+            }
+        },
+        {
+            "Id": "trigger-purchases",
+            "LambdaFunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:purchases_trans",
+            "Events": ["s3:ObjectCreated:*"],
+            "Filter": {
+                "Key": {
+                    "FilterRules": [
+                        {"Name": "prefix", "Value": "purchases/"}
+                    ]
+                }
+            }
+        },
+        {
+            "Id": "trigger-reviews",
+            "LambdaFunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:reviews_trans",
+            "Events": ["s3:ObjectCreated:*"],
+            "Filter": {
+                "Key": {
+                    "FilterRules": [
+                        {"Name": "prefix", "Value": "reviews/"}
+                    ]
+                }
+            }
+        }
+    ]
+}

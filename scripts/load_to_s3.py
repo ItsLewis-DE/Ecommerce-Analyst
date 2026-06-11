@@ -33,14 +33,15 @@ def upload_to_s3():
 
     for file_path in csv_files:
         file_name = file_path.name 
+        folder_name = file_path.stem
         
         try:
             s3_client.upload_file(
                 Filename=str(file_path), 
                 Bucket=BUCKET_RAW, 
-                Key=file_name
+                Key=f"{folder_name}/{file_name}"
             )
-            logging.info(f" Đã upload thành công: {file_name}")
+            logging.info(f" Đã upload thành công: {folder_name}/{file_name}")
             
         except ClientError as e:
             logging.error(f"Lỗi boto3 khi upload {file_name}: {e}")
