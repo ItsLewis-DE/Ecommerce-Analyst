@@ -1,0 +1,1 @@
+bash localstack/init_s3.sh && bash localstack/init_lambda.sh && python3 scripts/load_to_s3.py

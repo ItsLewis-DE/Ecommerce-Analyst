@@ -73,7 +73,7 @@ def lambda_handler(event,context):
                 logger.error(f"CHi tiết lỗi {exc}")
                 raise
             
-            out_key = f"{file_name}.parquet/part_{chunk_idx}.parquet"
+            out_key = f"{file_name}/part_{chunk_idx}.parquet"
             parquet_buffer = io.BytesIO()
             chunk_df.to_parquet(parquet_buffer, index=False)
             

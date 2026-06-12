@@ -11,6 +11,7 @@ awslocal s3 mb s3://process-bucket
 
 awslocal s3 mb s3://lambda-deploy-bucket
 
+awslocal s3 mb s3://mart-bucket
 
 echo "========================================="
 echo "Đã khởi tạo xong các bucket"
