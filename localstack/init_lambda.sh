@@ -1,29 +1,6 @@
 #!/bin/bash
 export AWS_PAGER=""
 
-echo "===================================="
-echo "Tạo Lambda Layer cho thư viện"
-echo "===================================="
-
-echo "Đang chuẩn bị thư viện (awswrangler & pandera)..."
-# Dọn dẹp thư mục cũ nếu chạy lại script nhiều lần
-rm -rf python/ my_data_layer.zip 
-mkdir -p python/
-
-wget https://github.com/aws/aws-sdk-pandas/releases/download/3.7.3/awswrangler-layer-3.7.3-py3.12.zip -O awswrangler.zip
-unzip -qo awswrangler.zip
-rm awswrangler.zip
-
-pip install --upgrade pandera -t python/ > /dev/null
-
-echo "===================================="
-echo "Khởi tạo các function cho Lambda qua S3"
-echo "===================================="
-
-# Ngăn AWS CLI sử dụng multipart upload cho file ZIP dưới 100MB
-aws configure set default.s3.multipart_threshold 100MB
-
-
 FUNCTIONS=(
     "users_trans"
     "products_trans"
@@ -37,33 +14,48 @@ for FUNC in "${FUNCTIONS[@]}"; do
     echo "------------------------------------"
     echo "Đang tạo file zip Code cho hàm $FUNC..."
     
-    rm -f code_$FUNC.zip
+    # Định nghĩa tên thư mục tạm cho chuẩn xác
+    PACKAGE_DIR="${FUNC}_package"
+    rm -rf $PACKAGE_DIR
     
-    # 1. Copy file handler.py của hàm vào chung thư mục chứa thư viện (thư mục python/)
-    cp src/functions/$FUNC/handler.py python/handler.py
-    
-    # 2. Đi vào thư mục python/ và nén TẤT CẢ (thư viện + handler) thành 1 file ZIP duy nhất
-    cd python
-    zip -rq ../code_$FUNC.zip .
-    cd ..
-    
+    # Cài đặt thư viện vào thư mục tạm
+    pip install -r src/functions/${FUNC}/requirements.txt -t $PACKAGE_DIR
+
+    # Copy file code chính vào thư mục tạm
+    cp src/functions/${FUNC}/handler.py $PACKAGE_DIR
+
+    # Quan trọng: CD vào trong thư mục tạm để nén, 
+    # đảm bảo code nằm ở root của file zip (không bị lồng trong thư mục con)
+    pushd $PACKAGE_DIR > /dev/null
+    zip -r ../${FUNC}.zip . > /dev/null
+    popd > /dev/null
+     
     echo "Đang upload zip của $FUNC lên S3..."
-    awslocal s3 cp code_$FUNC.zip s3://lambda-deploy-bucket/code_$FUNC.zip
+    awslocal s3 cp ${FUNC}.zip s3://lambda-deploy-bucket/${FUNC}.zip
     
     echo "Đang khởi tạo hàm $FUNC trên LocalStack..."
     awslocal lambda delete-function --function-name $FUNC 2>/dev/null
     
-    # 3. Tạo function mới (bỏ tham số --layers và sửa đường dẫn --handler)
+    # Tạo function mới
     awslocal lambda create-function \
         --function-name $FUNC \
         --runtime python3.12 \
         --handler handler.lambda_handler \
         --role arn:aws:iam::000000000000:role/LambdaRole \
-        --code S3Bucket=lambda-deploy-bucket,S3Key=code_$FUNC.zip \
+        --code S3Bucket=lambda-deploy-bucket,S3Key=${FUNC}.zip \
         --timeout 300 \
-        --memory-size 1024
+        --memory-size 8192
+        
+    # Xoá file zip và thư mục build tạm ngay trong vòng lặp cho sạch sẽ
+    rm ${FUNC}.zip
+    rm -rf $PACKAGE_DIR
 done
 
+echo "Áp dụng config cho bucket"
+awslocal s3api put-bucket-notification-configuration \
+    --bucket raw-bucket \
+    --notification-configuration file://notification.json
 
 echo "===================================="
-echo "Khởi tạo thành công ${#FUNCTIONS[@]} hàm Lambda với Layer dùng chung!"
+# Sửa lại câu báo cáo vì cách này là đóng gói độc lập, không dùng Layer
+echo "Khởi tạo thành công ${#FUNCTIONS[@]} hàm Lambda với các packages được đóng gói độc lập!"

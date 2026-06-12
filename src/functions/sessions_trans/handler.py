@@ -1,7 +1,7 @@
 import boto3 
 import json
 import urllib.parse
-import awswrangler as wr
+import io
 import pandera as pa
 from pandera import Column,DataFrameSchema,Check
 import os,logging
@@ -34,6 +34,7 @@ sessions_schema = DataFrameSchema(
 
 def lambda_handler(event,context):
     logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
     s3_record = event['Records'][0]
     event_name = s3_record['eventName']
     logger.info(f"Đang xử lí: {event}")
@@ -41,12 +42,11 @@ def lambda_handler(event,context):
     file_key = urllib.parse.unquote_plus(s3_record['s3']['object']['key'])
     file_name = Path(file_key).stem
 
-    s3_path_in = f"s3://{s3_record['s3']['bucket']['name']}/{file_key}"
-    s3_path_out = f's3://{BUCKET_PROCESSED}/{file_name}.parquet' 
-
+    bucket_in = s3_record['s3']['bucket']['name']
     try:
         #1. Đọc dữ liệu từ s3
-        dfs_iterator = wr.s3.read_csv(path=s3_path_in,chunksize=10000)
+        response = s3_client.get_object(Bucket=bucket_in, Key=file_key)
+        dfs_iterator = pd.read_csv(response['Body'], chunksize=10000)
 
         chunk_idx = 0
         is_first_chunk = True
@@ -63,10 +63,6 @@ def lambda_handler(event,context):
             chunk_df['start_time'] = pd.to_datetime(chunk_df['start_time'],errors='coerce')
             chunk_df['year'] = chunk_df['start_time'].dt.year 
             chunk_df['month'] = chunk_df['start_time'].dt.month
-            chunk_df = chunk_df.sort_values(by = 'start_time')
-            chunk_df['session_number'] = chunk_df.groupby('user_id').cumcount() + 1
-            chunk_df['user_type'] = np.where(chunk_df['session_number']==1,'New User','Returning User')
-            chunk_df['total_access'] = chunk_df.groupby('user_id')['user_id'].transform('size')
 
             # -----------------------------------------------------
             # 3. VALIDATION (Kiểm tra dữ liệu qua Data Contract)
@@ -79,12 +75,14 @@ def lambda_handler(event,context):
                 logger.error(f"CHi tiết lỗi {exc}")
                 raise
             
-            write_mode = 'overwrite' if is_first_chunk else 'append'
-            wr.s3.to_parquet(
-                df=chunk_df,
-                path = s3_path_out,
-                dataset=True,
-                mode = write_mode
+            out_key = f"{file_name}.parquet/part_{chunk_idx}.parquet"
+            parquet_buffer = io.BytesIO()
+            chunk_df.to_parquet(parquet_buffer, index=False)
+            
+            s3_client.put_object(
+                Bucket=BUCKET_PROCESSED,
+                Key=out_key,
+                Body=parquet_buffer.getvalue()
             )
             is_first_chunk = False
         logger.info("Đã xử lí xong toàn bộ các file!")
