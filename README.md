@@ -1,56 +1,56 @@
-# AWS Data Engineering Pipeline (LocalStack)
+# AWS Data Engineering & BI Pipeline (LocalStack)
 
-> **Mục đích của project này là để thử nghiệm các công cụ liên quan đến AWS Data Engineering, Serverless Architecture và Data Lake hoàn toàn trên môi trường Local.**
+> **Dự án xây dựng một hệ thống Data Pipeline end-to-end hoàn chỉnh: từ xử lý dữ liệu thô (Serverless Architecture), lưu trữ Data Lake, cho đến tự động hoá và trực quan hoá bằng Power BI thông qua DuckDB (Zero-Copy Architecture) hoàn toàn trên môi trường LocalStack.**
 
-Dự án mô phỏng một hệ thống Data Pipeline cho nền tảng Thương mại điện tử (E-commerce), đi từ dữ liệu thô (CSV) đến dữ liệu chuẩn hoá (Parquet) và tạo ra các báo cáo phân tích (Data Mart).
+## 🌟 Tổng quan Dự án (Overview)
+Dự án mô phỏng một hệ thống dữ liệu của nền tảng Thương mại điện tử (E-commerce). Hệ thống tự động thu thập dữ liệu giao dịch, làm sạch, biến đổi, tổng hợp thành Data Mart và cuối cùng là đẩy lên Dashboard trực quan.
+
 
 ## 🏗️ Kiến trúc Hệ thống (Architecture)
-1. **Raw Storage (S3 - `raw-bucket`)**: Nơi chứa dữ liệu nguyên bản dạng CSV tải lên từ hệ thống.
-2. **Data Transformation (AWS Lambda)**: Các hàm Lambda tự động được kích hoạt (S3 Event Trigger) khi có file CSV mới. Chúng đọc dữ liệu theo từng chunk, làm sạch, validate dữ liệu (sử dụng Pandera) và chuyển đổi sang định dạng Parquet.
-3. **Processed Storage (S3 - `process-bucket`)**: Nơi lưu trữ dữ liệu đã qua xử lý, chia nhỏ thành nhiều phần (`part_X.parquet`) theo chuẩn Data Lake.
-4. **Data Analytics & Data Mart (DuckDB + Lambda)**: Sử dụng **DuckDB** như một công cụ truy vấn (Query Engine) tốc độ cao để JOIN nhiều bảng dữ liệu trên S3, tính toán các metrics kinh doanh, và xuất kết quả ra bucket cuối cùng (`mart-bucket`).
+
+1. **Ingestion & Raw Storage (`raw-bucket`)**: Nơi tiếp nhận dữ liệu thô (CSV) từ hệ thống nguồn.
+2. **Transformation (AWS Lambda)**: Các hàm Lambda (`*_trans`) tự động được kích hoạt (S3 Event Trigger) ngay khi có file mới. Chúng chịu trách nhiệm:
+   - Validate Data Contract bằng **Pandera**.
+   - Làm sạch, chuẩn hoá dữ liệu.
+   - Chuyển đổi định dạng sang Parquet và lưu vào **Processed Storage (`process-bucket`)**.
+3. **Analytics & Data Mart (`function_analys` Lambda)**: Một hàm Lambda độc lập sử dụng **DuckDB** làm Query Engine tốc độ cao. Hàm này join các bảng Parquet, tính toán các chỉ số kinh doanh cốt lõi (Conversion Funnel, Segmentation, Engagement...) và lưu kết quả ra **`mart-bucket`**.
+4. **Automation (Amazon EventBridge)**: Hàm phân tích được tự động kích hoạt mỗi giờ (cron schedule) thông qua EventBridge để luôn đảm bảo dữ liệu Data Mart được cập nhật mới nhất.
 
 ## 📂 Cấu trúc Thư mục
 
-- `data/`: Chứa các file dữ liệu mẫu CSV (`interactions.csv`, `products.csv`, `users.csv`,...).
-- `localstack/`: Các script Bash để khởi tạo hạ tầng AWS cục bộ trên LocalStack.
-  - `init_s3.sh`: Khởi tạo các buckets S3.
-  - `init_lambda.sh`: Cấu hình, nén code và deploy các hàm Lambda.
-  - `full_deploy.sh`: Script tổng hợp để chạy toàn bộ quá trình setup trong 1 lệnh.
-- `scripts/load_to_s3.py`: Script upload file CSV từ local lên `raw-bucket` để kích hoạt chuỗi sự kiện.
-- `src/functions/`: Source code của các hàm Lambda:
-  - `*_trans/`: Các hàm xử lý dữ liệu đầu vào (interactions, products, users,...).
-  - `function_analys/`: Hàm sử dụng DuckDB để tổng hợp dữ liệu ra các báo cáo kinh doanh.
+- `data/`: Chứa các file dữ liệu mẫu dạng CSV (khách hàng, sản phẩm, tương tác,...).
+- `localstack/`: Các script Bash tự động hoá khởi tạo hạ tầng AWS cục bộ:
+  - `init_s3.sh`: Khởi tạo Data Lake (buckets).
+  - `init_lambda.sh`: Cấu hình, đóng gói và deploy Lambda.
+  - `init_eventbridge.sh`: Lên lịch tự động (Cron job) cho hàm phân tích.
+  - `full_deploy.sh`: Script chạy toàn bộ quy trình CI/CD giả lập.
+- `src/functions/`: Source code của các hàm Lambda Serverless.
+- `scripts/load_to_s3.py`: Script trigger pipeline bằng cách upload data lên S3.
+- `setup_pbi.py`: Script khởi tạo cơ sở dữ liệu kết nối giữa S3 và Power BI.
 
 ## 🚀 Hướng dẫn chạy dự án
 
-**Bước 1: Khởi động LocalStack**
-Sử dụng Docker Compose để bật LocalStack.
+### Bước 1: Khởi động LocalStack
+Sử dụng Docker Compose để bật môi trường AWS cục bộ.
 ```bash
 docker-compose up -d
 ```
 
-**Bước 2: Triển khai Hạ tầng (Deploy)**
-Khởi tạo toàn bộ bucket, nén code Lambda và upload lên LocalStack:
+### Bước 2: Triển khai Hạ tầng (Deploy)
+Khởi tạo toàn bộ bucket, nén code Lambda, upload lên LocalStack và thiết lập EventBridge:
 ```bash
 bash localstack/full_deploy.sh
 ```
+*(Script này cũng sẽ tự động upload dữ liệu thô lên `raw-bucket` để kích hoạt chuỗi Lambda xử lý ban đầu).*
 
-**Bước 3: Tải Dữ liệu lên S3 (Trigger Pipeline)**
-Tải các file CSV lên `raw-bucket` để kích hoạt các hàm Lambda tự động xử lý. (Lệnh này đã được tích hợp sẵn ở cuối `full_deploy.sh` nếu bạn chạy kịch bản tự động).
+### Bước 3: Cấu hình kết nối Power BI
+Tạo file cơ sở dữ liệu trung gian chứa các TABLE:
 ```bash
-python scripts/load_to_s3.py
+python setup_pbi.py
 ```
-
-**Bước 4: Xuất Báo cáo (Data Mart)**
-Chạy script DuckDB để tổng hợp và tải các báo cáo (Conversion Funnel, Customer Segmentation,...) lên `mart-bucket`:
-```bash
-python src/functions/function_analys/handler.py
-```
-*Ghi chú: Lệnh phân tích này có thể được chuyển thành một Lambda và lên lịch tự động bằng EventBridge (Cron).*
 
 ## 🛠️ Công nghệ sử dụng
-- **LocalStack**: Giả lập môi trường AWS (S3, Lambda, IAM, EventBridge).
-- **Pandas & Pandera**: Xử lý dữ liệu và kiểm chứng Data Contract (Schema Validation).
-- **DuckDB**: Động cơ In-process OLAP cực nhanh để query trực tiếp Data Lake.
-- **uv**: Trình quản lý package Python cực nhanh.
+- **AWS LocalStack**: S3, Lambda, IAM, EventBridge.
+- **Python Data Stack**: Pandas, Pandera (Data Quality).
+- **DuckDB**: Động cơ In-process OLAP cực nhanh cho Data Lake.
+- **Power BI**: BI Dashboarding.

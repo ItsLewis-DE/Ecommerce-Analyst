@@ -1,12 +1,24 @@
 import duckdb
 import os
 
-S3_ENDPOINT=os.getenv('S3_ENDPOINT','localhost:4566')
+# Lấy địa chỉ LocalStack Host nếu đang chạy trong Lambda Container
+aws_endpoint = os.getenv('AWS_ENDPOINT_URL')
+local_host = os.getenv('LOCALSTACK_HOSTNAME')
+
+if aws_endpoint:
+    default_endpoint = aws_endpoint.replace("http://", "").replace("https://", "").rstrip('/')
+elif local_host:
+    default_endpoint = f"{local_host}:4566"
+else:
+    default_endpoint = 'localhost:4566' # Fallback cho chay local (WSL)
+
+S3_ENDPOINT=os.getenv('S3_ENDPOINT', default_endpoint)
 REGION=os.getenv('REGION','us-east-1')
 BUCKET_LOAD=os.getenv('BUCKET_LOAD','process-bucket')
 BUCKET_TO=os.getenv('BUCKET_TO','mart-bucket')
 
 conn = duckdb.connect(database=':memory:')
+conn.execute("SET home_directory='/tmp';")
 conn.execute("INSTALL httpfs;")
 conn.execute("LOAD httpfs;")
 
@@ -33,7 +45,6 @@ def lambda_handler(event,context):
         WHERE i.interaction_type = 'view'
         GROUP BY p.category, i.interaction_type
         ORDER BY total_views DESC
-        LIMIT 10;
     """
     print("Đang truy cấn trực tiếp vào S3....")
 
@@ -72,16 +83,16 @@ click_events AS(
 
 SELECT 
     -- 1. Phần trăm khách hàng bỏ vào giỏ hàng sau khi xem sản phẩm
-    ROUND(COUNT(c.session_id) * 100.0 / COUNT(v.session_id), 2) AS view_to_cart_percentage,
+    ROUND(COUNT(c.session_id) * 100.0 / NULLIF(COUNT(v.session_id), 0), 2) AS view_to_cart_percentage,
     
     -- 2. Phần trăm khách hàng bỏ sản phẩm ra khỏi mục yêu thích sau khi xem sản phẩm
-    ROUND(COUNT(rw.session_id) * 100.0 / COUNT(v.session_id), 2) AS view_to_remove_wishlist_percentage,
+    ROUND(COUNT(rw.session_id) * 100.0 / NULLIF(COUNT(v.session_id), 0), 2) AS view_to_remove_wishlist_percentage,
     
     -- 3. Phần trăm khách hàng cho vào sản phẩm yêu thích sau khi xem sản phẩm
-    ROUND(COUNT(aw.session_id) * 100.0 / COUNT(v.session_id), 2) AS view_to_add_wishlist_percentage,
+    ROUND(COUNT(aw.session_id) * 100.0 / NULLIF(COUNT(v.session_id), 0), 2) AS view_to_add_wishlist_percentage,
     
     -- 4. Phần trăm khách hàng click sau khi xem sản phẩm
-    ROUND(COUNT(cl.session_id) * 100.0 / COUNT(v.session_id), 2) AS view_to_click_percentage
+    ROUND(COUNT(cl.session_id) * 100.0 / NULLIF(COUNT(v.session_id), 0), 2) AS view_to_click_percentage
 
 
 FROM view_events v
@@ -104,8 +115,7 @@ LEFT JOIN click_events cl
         JOIN read_parquet('s3://{BUCKET_LOAD}/users/*.parquet') AS u 
             ON p.user_id = u.user_id
         GROUP BY u.city, u.loyalty_tier
-        ORDER BY city,loyalty_tier
-        LIMIT 10;
+        ORDER BY unique_buyers DESC
     """
 
     sql_query_4 = f"""
@@ -122,7 +132,6 @@ LEFT JOIN click_events cl
         GROUP BY prd.product_name, prd.category, prd.rating_avg
         HAVING COUNT(i.interaction_id) > 100  -- Chỉ lấy các SP có nhiều người xem
         ORDER BY total_views DESC
-        LIMIT 10;
 
     """
     sql_query_5 = f"""
@@ -150,9 +159,7 @@ LEFT JOIN click_events cl
         print(f"Đang tính toán và lưu {name} lên {s3_path}...")
         # Xóa dấu chấm phẩy ở cuối query để đưa vào trong ngoặc tròn COPY ()
         clean_query = query.strip().rstrip(';')
-        conn.execute(f"COPY ({clean_query}) TO '{s3_path}' (FORMAT PARQUET);")
-        
-    print("Hoàn tất đẩy toàn bộ Data Mart lên S3!")
-
-if __name__ == '__main__':
-    lambda_handler({}, None)
+        try:
+            conn.execute(f"COPY ({clean_query}) TO '{s3_path}' (FORMAT PARQUET);")
+        except Exception as e:
+            print(f"[Cảnh báo] Bỏ qua báo cáo {name} do lỗi (có thể do S3 chưa có file parquet): {e}")
