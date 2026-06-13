@@ -64,7 +64,7 @@ def lambda_handler(event,context):
             chunk_df['country'] = chunk_df['country'].str.upper()
             chunk_df['city'] = chunk_df['city'].str.title()
             chunk_df['income_level'] = chunk_df['income_level'].where(chunk_df['income_level'].isin(['low','medium','high','very_high']),'unknown')
-            chunk_df['loyal_tier'] = chunk_df['loyalty_tier'].where(chunk_df['loyalty_tier'].isin(['bronze', 'silver', 'gold']), 'unknown')
+            chunk_df['loyalty_tier'] = chunk_df['loyalty_tier'].where(chunk_df['loyalty_tier'].isin(['bronze', 'silver', 'gold','platinum']), 'unknown')
             # ---------------------------------------~--------------
             # 3. VALIDATION (Kiểm tra dữ liệu qua Data Contract)
             # -----------------------------------------------------

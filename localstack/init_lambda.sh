@@ -1,6 +1,10 @@
 #!/bin/bash
 export AWS_PAGER=""
 
+# Tăng giới hạn multipart upload lên 100MB để tránh lỗi Checksum của LocalStack khi đẩy file zip lớn (DuckDB)
+awslocal configure set default.s3.multipart_threshold 100MB
+awslocal configure set default.s3.multipart_chunksize 100MB
+
 FUNCTIONS=(
     "users_trans"
     "products_trans"
@@ -8,6 +12,7 @@ FUNCTIONS=(
     "interactions_trans"
     "purchases_trans"
     "reviews_trans"
+    "function_analys"
 )
 
 for FUNC in "${FUNCTIONS[@]}"; do
@@ -31,7 +36,7 @@ for FUNC in "${FUNCTIONS[@]}"; do
     popd > /dev/null
      
     echo "Đang upload zip của $FUNC lên S3..."
-    awslocal s3 cp ${FUNC}.zip s3://lambda-deploy-bucket/${FUNC}.zip
+    awslocal s3api put-object --bucket lambda-deploy-bucket --key ${FUNC}.zip --body ${FUNC}.zip > /dev/null
     
     echo "Đang khởi tạo hàm $FUNC trên LocalStack..."
     awslocal lambda delete-function --function-name $FUNC 2>/dev/null
